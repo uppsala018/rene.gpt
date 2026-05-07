@@ -73,6 +73,17 @@
                 <span id="imagePreviewFilename" class="text-sm text-gray-200 flex-1 truncate"></span>
                 <button id="removeImageButton" class="text-red-400 hover:text-red-300 text-lg leading-none ml-2">✕</button>
             </div>
+            <!-- Analyze URL container -->
+            <div id="analyzeUrlContainer" class="hidden w-full flex flex-col gap-2 p-2 bg-gray-700 rounded-lg">
+                <input type="url" id="urlInput" placeholder="https://example.com" class="p-2 rounded-md bg-gray-600 border border-gray-500 text-gray-100 focus:ring-indigo-500 focus:border-indigo-500">
+                <select id="analysisTypeSelect" class="p-2 rounded-md bg-gray-600 border border-gray-500 text-gray-100">
+                    <option value="SEO">SEO</option>
+                    <option value="Layout">Layout</option>
+                    <option value="Copywriting">Copywriting</option>
+                    <option value="Accessibility">Accessibility</option>
+                    <option value="Technical">Technical</option>
+                </select>
+            </div>
             <!-- Input row -->
             <div class="flex items-center w-full">
                 <input type="text" id="userMessageInput" placeholder="Skriv ditt meddelande..." class="flex-1 p-3 rounded-lg bg-gray-700 border border-gray-600 text-gray-100 focus:ring-indigo-500 focus:border-indigo-500 mr-4">
@@ -85,6 +96,11 @@
                 <div class="flex items-center mr-2">
                     <input type="checkbox" id="internetSearchToggle" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-600 rounded bg-gray-700">
                     <label for="internetSearchToggle" class="ml-2 text-sm text-gray-300">Internet search</label>
+                </div>
+                <!-- Analyze URL toggle -->
+                <div class="flex items-center mr-2">
+                    <input type="checkbox" id="analyzeUrlToggle" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-600 rounded bg-gray-700">
+                    <label for="analyzeUrlToggle" class="ml-2 text-sm text-gray-300">Analyze URL</label>
                 </div>
                 <button id="sendMessageButton" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition duration-200">Skicka</button>
             </div>
@@ -103,11 +119,26 @@
         const imagePreviewFilename = document.getElementById('imagePreviewFilename');
         const removeImageButton = document.getElementById('removeImageButton');
         const internetSearchToggle = document.getElementById('internetSearchToggle');
+        const analyzeUrlToggle = document.getElementById('analyzeUrlToggle');
+        const analyzeUrlContainer = document.getElementById('analyzeUrlContainer');
+        const urlInput = document.getElementById('urlInput');
+        const analysisTypeSelect = document.getElementById('analysisTypeSelect');
 
         let conversationMessages = [];
         let selectedImageDataUrl = null;
         let selectedImageMimeType = null;
         let selectedImageFilename = null;
+
+        // Toggle analyze URL container visibility
+        analyzeUrlToggle.addEventListener('change', () => {
+            if (analyzeUrlToggle.checked) {
+                analyzeUrlContainer.classList.remove('hidden');
+                userMessageInput.placeholder = 'Optional instructions...';
+            } else {
+                analyzeUrlContainer.classList.add('hidden');
+                userMessageInput.placeholder = 'Skriv ditt meddelande...';
+            }
+        });
 
         // --- Model Selection ---
         const models = {
@@ -195,6 +226,10 @@
             } else {
                 userMessageInput.placeholder = 'Skriv ditt meddelande...';
             }
+            // If analyze URL mode is active, override placeholder
+            if (analyzeUrlToggle.checked) {
+                userMessageInput.placeholder = 'Optional instructions...';
+            }
         }
 
         modelCategorySelect.addEventListener('change', populateModels);
@@ -264,6 +299,105 @@
 
         async function sendMessage() {
             const userMessage = userMessageInput.value.trim();
+            const isAnalyzeUrlMode = analyzeUrlToggle.checked;
+
+            if (isAnalyzeUrlMode) {
+                // Analyze URL mode
+                const url = urlInput.value.trim();
+                if (!url) {
+                    addMessage('ai', 'Please enter a URL to analyze.');
+                    return;
+                }
+                if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                    addMessage('ai', 'Invalid URL. Must start with http:// or https://');
+                    return;
+                }
+                const analysisType = analysisTypeSelect.value;
+                // Get selected model info
+                const selectedOption = selectedModelSelect.options[selectedModelSelect.selectedIndex];
+                const provider = selectedOption.dataset.provider;
+                const modelId = selectedOption.value;
+
+                // Add user message to chat showing the URL and analysis type
+                addMessage('user', `Analyze URL: ${url} (${analysisType})${userMessage ? ' - ' + userMessage : ''}`);
+                userMessageInput.value = ''; // Clear input
+
+                // Show a "thinking" message
+                const thinkingMessageElement = document.createElement('div');
+                thinkingMessageElement.classList.add('flex', 'justify-start');
+                thinkingMessageElement.innerHTML = `
+                    <div class="bg-gray-700 p-3 rounded-lg max-w-xl text-gray-100">
+                        <p class="text-sm animate-pulse">Analyserar...</p>
+                    </div>
+                `;
+                chatMessagesDiv.appendChild(thinkingMessageElement);
+                chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+
+                // Construct request body
+                let body = {
+                    mode: 'analyze_url',
+                    url: url,
+                    analysisType: analysisType,
+                    provider: provider,
+                    model: modelId,
+                    messages: []
+                };
+                if (userMessage) {
+                    body.messages = [{ role: 'user', content: userMessage }];
+                }
+
+                try {
+                    const response = await fetch('/api/chat', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(body)
+                    });
+
+                    const responseData = await response.json();
+
+                    // Remove the "thinking" message
+                    chatMessagesDiv.removeChild(thinkingMessageElement);
+
+                    if (!response.ok) {
+                        const errorMsg = responseData.error || `HTTP ${response.status}: ${response.statusText}`;
+                        addMessage('ai', `Fel: ${errorMsg}`);
+                        return;
+                    }
+
+                    // Display analysis result
+                    const aiMessageElement = document.createElement('div');
+                    aiMessageElement.classList.add('flex', 'justify-start');
+                    let contentHTML = '<div class="p-3 rounded-lg max-w-xl bg-gray-700 text-gray-100">';
+                    if (responseData.text) {
+                        contentHTML += `<p class="text-sm">${responseData.text}</p>`;
+                    }
+                    // Show extracted SEO data in a collapsible section
+                    if (responseData.extractedSeoData) {
+                        contentHTML += `<details class="mt-2 text-xs text-gray-400"><summary>Extracted SEO Data</summary><pre class="whitespace-pre-wrap">${JSON.stringify(responseData.extractedSeoData, null, 2)}</pre></details>`;
+                    }
+                    contentHTML += '</div>';
+                    aiMessageElement.innerHTML = contentHTML;
+                    chatMessagesDiv.appendChild(aiMessageElement);
+
+                    // Status line
+                    const statusLine = document.createElement('div');
+                    statusLine.classList.add('flex', 'justify-start', 'mt-1');
+                    statusLine.innerHTML = `<span class="text-xs text-gray-400">Analysis by ${responseData.providerUsed} · ${responseData.modelUsed} · ${responseData.analysisType}</span>`;
+                    chatMessagesDiv.appendChild(statusLine);
+
+                    chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+
+                } catch (error) {
+                    console.error("Fel vid analys av URL:", error);
+                    chatMessagesDiv.removeChild(thinkingMessageElement);
+                    addMessage('ai', `Ett fel uppstod: ${error.message}`);
+                }
+                return;
+            }
+
+            // Normal chat / image generation mode
             if (!userMessage && !selectedImageDataUrl) return;
 
             // Get selected model info

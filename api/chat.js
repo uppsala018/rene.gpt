@@ -3,7 +3,7 @@ module.exports = async (req, res) => {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { messages, provider, model, mode, prompt, imageDataUrl, imageMimeType, internetSearch } = req.body;
+    const { messages, provider, model, mode, prompt, imageDataUrl, imageMimeType, internetSearch, url, analysisType } = req.body;
     const isInternetSearch = Boolean(internetSearch);
 
     // Handle image generation mode
@@ -83,6 +83,130 @@ module.exports = async (req, res) => {
         } catch (error) {
             console.error('Image generation error:', error);
             return res.status(500).json({ error: `Image generation failed: ${error.message}` });
+        }
+    }
+
+    // Handle analyze URL mode
+    if (mode === 'analyze_url') {
+        if (!url || !analysisType) {
+            return res.status(400).json({ error: 'Missing url or analysisType' });
+        }
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            return res.status(400).json({ error: 'Invalid URL. Must start with http:// or https://' });
+        }
+        const selectedProvider = provider || 'openrouter';
+        const selectedModel = model || 'tencent/hy3-preview:free';
+
+        try {
+            // Fetch the webpage with timeout
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 10000);
+            let fetchResponse;
+            try {
+                fetchResponse = await fetch(url, { 
+                    signal: controller.signal,
+                    headers: { 'User-Agent': 'Rene.Gpt Analyzer' }
+                });
+            } catch (fetchError) {
+                clearTimeout(timeout);
+                if (fetchError.name === 'AbortError') {
+                    return res.status(400).json({ error: 'Fetch timeout: Could not fetch webpage within 10 seconds.' });
+                }
+                return res.status(400).json({ error: `Could not fetch webpage: ${fetchError.message}` });
+            }
+            clearTimeout(timeout);
+
+            if (!fetchResponse.ok) {
+                return res.status(400).json({ error: `Could not fetch webpage: ${fetchResponse.status} ${fetchResponse.statusText}` });
+            }
+
+            let html = await fetchResponse.text();
+            // Limit HTML size to ~1MB
+            if (html.length > 1000000) {
+                html = html.substring(0, 1000000);
+            }
+
+            // Extract SEO data
+            const seoData = extractSeoData(html, url);
+
+            // Build analysis prompt
+            const promptText = buildAnalysisPrompt(url, analysisType, seoData);
+
+            // Prepare messages for AI
+            const analysisMessages = [{ role: 'user', content: promptText }];
+
+            // Call AI based on provider
+            let aiResponseText = '';
+            let usedProvider = selectedProvider;
+            let usedModel = selectedModel;
+
+            if (selectedProvider === 'openrouter') {
+                const openrouterApiKey = process.env.OPENROUTER_API_KEY;
+                if (!openrouterApiKey) {
+                    return res.status(400).json({ error: 'Missing OPENROUTER_API_KEY environment variable' });
+                }
+                const openrouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${openrouterApiKey}`,
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': req.headers.origin || 'http://localhost',
+                        'X-Title': 'rene.gpt'
+                    },
+                    body: JSON.stringify({
+                        model: selectedModel,
+                        messages: analysisMessages
+                    })
+                });
+                if (!openrouterResponse.ok) {
+                    const errorData = await openrouterResponse.json().catch(() => ({}));
+                    const errorMsg = errorData.error?.message || openrouterResponse.statusText;
+                    return res.status(openrouterResponse.status).json({ error: `OpenRouter error: ${errorMsg}` });
+                }
+                const data = await openrouterResponse.json();
+                aiResponseText = data.choices?.[0]?.message?.content || 'No analysis.';
+                usedProvider = 'openrouter';
+                usedModel = selectedModel;
+            } else if (selectedProvider === 'gemini') {
+                const geminiApiKey = process.env.GEMINI_API_KEY;
+                if (!geminiApiKey) {
+                    return res.status(400).json({ error: 'Missing GEMINI_API_KEY environment variable' });
+                }
+                const geminiContents = convertMessagesToGemini(analysisMessages);
+                const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent`, {
+                    method: 'POST',
+                    headers: {
+                        'x-goog-api-key': geminiApiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ contents: geminiContents })
+                });
+                if (!geminiResponse.ok) {
+                    const errorData = await geminiResponse.json().catch(() => ({}));
+                    const errorMsg = errorData.error?.message || geminiResponse.statusText;
+                    return res.status(geminiResponse.status).json({ error: `Gemini error: ${errorMsg}` });
+                }
+                const geminiData = await geminiResponse.json();
+                aiResponseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'No analysis.';
+                usedProvider = 'gemini';
+                usedModel = selectedModel;
+            } else {
+                return res.status(400).json({ error: `Unknown provider: ${selectedProvider}` });
+            }
+
+            return res.status(200).json({
+                text: aiResponseText,
+                providerUsed: usedProvider,
+                modelUsed: usedModel,
+                mode: 'analyze_url',
+                url,
+                analysisType,
+                extractedSeoData: seoData
+            });
+
+        } catch (error) {
+            console.error('Analyze URL error:', error);
+            return res.status(500).json({ error: `Analyze URL failed: ${error.message}` });
         }
     }
 
@@ -469,4 +593,191 @@ function convertMessagesToGemini(messages, imageDataUrl = null, imageMimeType = 
     }
 
     return contents;
+}
+
+// Helper function to extract SEO data from HTML
+function extractSeoData(html, pageUrl) {
+    const data = {
+        title: '',
+        metaDescription: '',
+        canonical: '',
+        robots: '',
+        h1: [],
+        h2: [],
+        h3: [],
+        openGraph: {},
+        twitterCard: {},
+        jsonLd: [],
+        imageCount: 0,
+        imagesMissingAlt: 0,
+        internalLinksCount: 0,
+        externalLinksCount: 0,
+        wordCount: 0
+    };
+
+    // Extract title
+    const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+    if (titleMatch) data.title = titleMatch[1].trim();
+
+    // Meta description
+    const descMatch = html.match(/<meta\s+name="description"\s+content="(.*?)"/i) || html.match(/<meta\s+content="(.*?)"\s+name="description"/i);
+    if (descMatch) data.metaDescription = descMatch[1].trim();
+
+    // Canonical link
+    const canonMatch = html.match(/<link\s+rel="canonical"\s+href="(.*?)"/i);
+    if (canonMatch) data.canonical = canonMatch[1].trim();
+
+    // Robots meta
+    const robotsMatch = html.match(/<meta\s+name="robots"\s+content="(.*?)"/i);
+    if (robotsMatch) data.robots = robotsMatch[1].trim();
+
+    // H1 tags
+    const h1Regex = /<h1[^>]*>(.*?)<\/h1>/gi;
+    let h1Match;
+    while ((h1Match = h1Regex.exec(html)) !== null) {
+        data.h1.push(h1Match[1].replace(/<[^>]+>/g, '').trim());
+    }
+
+    // H2 tags
+    const h2Regex = /<h2[^>]*>(.*?)<\/h2>/gi;
+    let h2Match;
+    while ((h2Match = h2Regex.exec(html)) !== null) {
+        data.h2.push(h2Match[1].replace(/<[^>]+>/g, '').trim());
+    }
+
+    // H3 tags
+    const h3Regex = /<h3[^>]*>(.*?)<\/h3>/gi;
+    let h3Match;
+    while ((h3Match = h3Regex.exec(html)) !== null) {
+        data.h3.push(h3Match[1].replace(/<[^>]+>/g, '').trim());
+    }
+
+    // OpenGraph tags
+    const ogRegex = /<meta\s+property="og:([^"]+)"\s+content="([^"]+)"/gi;
+    let ogMatch;
+    while ((ogMatch = ogRegex.exec(html)) !== null) {
+        data.openGraph[ogMatch[1]] = ogMatch[2];
+    }
+
+    // Twitter card tags
+    const twitterRegex = /<meta\s+name="twitter:([^"]+)"\s+content="([^"]+)"/gi;
+    let twitterMatch;
+    while ((twitterMatch = twitterRegex.exec(html)) !== null) {
+        data.twitterCard[twitterMatch[1]] = twitterMatch[2];
+    }
+
+    // JSON-LD schema
+    const jsonLdRegex = /<script\s+type="application\/ld\+json">(.*?)<\/script>/gis;
+    let jsonLdMatch;
+    while ((jsonLdMatch = jsonLdRegex.exec(html)) !== null) {
+        try {
+            const parsed = JSON.parse(jsonLdMatch[1]);
+            data.jsonLd.push(parsed);
+        } catch (e) {
+            // Ignore invalid JSON
+        }
+    }
+
+    // Image count and missing alt
+    const imgRegex = /<img[^>]*>/gi;
+    const imgMatches = html.match(imgRegex) || [];
+    data.imageCount = imgMatches.length;
+    imgMatches.forEach(img => {
+        if (!/alt\s*=/i.test(img) || /alt=""/i.test(img)) {
+            data.imagesMissingAlt++;
+        }
+    });
+
+    // Links count
+    const linkRegex = /<a[^>]*href="([^"]+)"[^>]*>/gi;
+    let linkMatch;
+    let pageHost = '';
+    try {
+        pageHost = new URL(pageUrl).hostname;
+    } catch (e) {
+        pageHost = '';
+    }
+    while ((linkMatch = linkRegex.exec(html)) !== null) {
+        const href = linkMatch[1];
+        if (href.startsWith('http')) {
+            try {
+                const linkHost = new URL(href).hostname;
+                if (linkHost === pageHost) {
+                    data.internalLinksCount++;
+                } else {
+                    data.externalLinksCount++;
+                }
+            } catch (e) {
+                // ignore invalid URLs
+            }
+        } else if (!href.startsWith('#') && !href.startsWith('mailto:')) {
+            // Relative links considered internal
+            data.internalLinksCount++;
+        }
+    }
+
+    // Word count (strip HTML tags)
+    const textOnly = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    data.wordCount = textOnly.split(/\s+/).filter(w => w.length > 0).length;
+
+    return data;
+}
+
+// Helper function to build analysis prompt based on type
+function buildAnalysisPrompt(url, analysisType, seoData) {
+    let prompt = `You are an expert web analyst. Analyze the webpage at URL: ${url} for ${analysisType}.\n\n`;
+    prompt += `Extracted SEO/Page Data:\n${JSON.stringify(seoData, null, 2)}\n\n`;
+    switch (analysisType) {
+        case 'SEO':
+            prompt += `Please provide a short structured audit with:
+- Overall score 1-10
+- Biggest SEO problems
+- Title/meta description assessment
+- H1/H2 structure
+- Internal linking
+- Image alt text
+- Schema/structured data
+- Top 5 recommended fixes`;
+            break;
+        case 'Layout':
+            prompt += `Explain that this analysis is based on HTML structure only, not a rendered screenshot.
+Assess:
+- page structure
+- visual hierarchy inferred from headings/sections
+- CTA clarity
+- navigation clarity
+- possible mobile/responsive risks
+- top 5 layout improvements`;
+            break;
+        case 'Copywriting':
+            prompt += `Analyze the copywriting aspects:
+- Headlines effectiveness
+- Message clarity
+- Call-to-action language
+- Tone and voice
+- Persuasion elements
+- Top 5 copywriting improvements`;
+            break;
+        case 'Accessibility':
+            prompt += `Check accessibility issues:
+- missing alt text
+- heading structure
+- link text quality
+- form labels if detectable
+- landmark/semantic HTML if detectable
+- Top 5 accessibility improvements`;
+            break;
+        case 'Technical':
+            prompt += `Analyze technical aspects:
+- HTML validation issues
+- Meta tags completeness
+- Canonical and robots
+- Page speed factors (from HTML size)
+- Structured data correctness
+- Top 5 technical improvements`;
+            break;
+        default:
+            prompt += `Provide a general analysis.`;
+    }
+    return prompt;
 }
