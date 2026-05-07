@@ -33,6 +33,23 @@ module.exports = async (req, res) => {
             if (!geminiResponse.ok) {
                 const errorData = await geminiResponse.json().catch(() => ({}));
                 const errorMsg = errorData.error?.message || geminiResponse.statusText;
+                const fullErrorContext = JSON.stringify(errorData) + ' ' + errorMsg;
+                // Kontrollera om det är ett kvotfel för gratisnivån
+                const isQuotaExhausted = fullErrorContext.includes('limit: 0') || 
+                                        fullErrorContext.includes('generate_content_free_tier_requests') || 
+                                        fullErrorContext.includes('Quota exceeded');
+                if (isQuotaExhausted) {
+                    return res.status(403).json({ 
+                        error: 'Gemini image generation is not available on your current free-tier quota. Enable billing/Tier 1 in Google AI Studio or use another image provider.' 
+                    });
+                }
+                // Hantera normala rate limit-fel (429 utan kvotproblem)
+                if (geminiResponse.status === 429) {
+                    return res.status(429).json({ 
+                        error: 'Gemini is rate limited. Try again later.' 
+                    });
+                }
+                // Andra fel
                 return res.status(geminiResponse.status).json({ error: `Gemini image generation error: ${errorMsg}` });
             }
             const geminiData = await geminiResponse.json();
