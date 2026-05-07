@@ -53,6 +53,7 @@
                     <option value="coding">Kodning</option>
                     <option value="images">Bilder</option>
                     <option value="video">Video</option>
+                    <option value="other">Övrigt</option>
                 </select>
             </div>
             <div>
@@ -127,18 +128,43 @@
                 { id: 'openrouter-mistralai/mistral-7b-instruct', name: 'Mistral 7B Instruct (OpenRouter)' }
             ],
             reasoning: [
-                { id: 'openrouter-openai/gpt-4o', name: 'GPT-4o (OpenRouter)' },
-                { id: 'openrouter-anthropic/claude-3-opus', name: 'Claude 3 Opus (OpenRouter)' }
+                { id: 'liquid/lfm-2.5-1.2b-thinking:free', name: 'Liquid LFM 2.5 1.2B (Thinking)' },
+                { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', name: 'Nemotron 3 Nano Omni 30B (Reasoning)' },
+                { id: 'openai/gpt-oss-120b:free', name: 'GPT OSS 120B' },
+                { id: 'openai/gpt-oss-20b:free', name: 'GPT OSS 20B' },
+                { id: 'qwen/qwen3-next-80b-a3b-instruct:free', name: 'Qwen3 Next 80B A3B Instruct' },
+                { id: 'minimax/minimax-m2.5:free', name: 'Minimax M2.5' },
+                { id: 'z-ai/glm-4.5-air:free', name: 'GLM 4.5 Air' },
+                { id: 'inclusionai/ling-2.6-1t:free', name: 'Ling 2.6 1T' }
             ],
             coding: [
-                { id: 'openrouter-openai/gpt-4o-mini', name: 'GPT-4o Mini (OpenRouter)' },
-                { id: 'openrouter-perplexity/llama-3-8b-instruct', name: 'Llama 3 8B Instruct (OpenRouter)' }
+                { id: 'baidu/cobuddy:free', name: 'Cobuddy' },
+                { id: 'qwen/qwen3-coder:free', name: 'Qwen3 Coder' },
+                { id: 'poolside/laguna-m.1:free', name: 'Laguna M.1' },
+                { id: 'poolside/laguna-xs.2:free', name: 'Laguna XS.2' },
+                { id: 'tencent/hy3-preview:free', name: 'Hy3 Preview' }
             ],
             images: [
-                { id: 'openrouter-stability-ai/stable-diffusion-xl-beta', name: 'Stable Diffusion XL (OpenRouter)' }
+                { id: 'baidu/qianfan-ocr-fast:free', name: 'Qianfan OCR Fast' },
+                { id: 'nvidia/nemotron-nano-12b-v2-vl:free', name: 'Nemotron Nano 12B V2 VL' }
             ],
             video: [
-                { id: 'openrouter-runwayml/stable-video-diffusion', name: 'Stable Video Diffusion (OpenRouter)' }
+                { id: 'google/lyria-3-clip-preview', name: 'Lyria 3 Clip Preview' },
+                { id: 'google/lyria-3-pro-preview', name: 'Lyria 3 Pro Preview' }
+            ],
+            other: [
+                { id: 'liquid/lfm-2.5-1.2b-instruct:free', name: 'Liquid LFM 2.5 1.2B (Instruct)' },
+                { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B (Instruct)' },
+                { id: 'meta-llama/llama-3.2-3b-instruct:free', name: 'Llama 3.2 3B (Instruct)' },
+                { id: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', name: 'Dolphin Mistral 24B Venice Edition' },
+                { id: 'nousresearch/hermes-3-llama-3.1-405b:free', name: 'Hermes 3 (Llama 3.1 405B)' },
+                { id: 'google/gemma-4-26b-a4b-it:free', name: 'Gemma 4 26B A4B IT' },
+                { id: 'google/gemma-4-31b-it:free', name: 'Gemma 4 31B IT' },
+                { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'Nemotron 3 Nano 30B A3B' },
+                { id: 'nvidia/nemotron-3-super-120b-a12b:free', name: 'Nemotron 3 Super 120B A12B' },
+                { id: 'nvidia/nemotron-nano-9b-v2:free', name: 'Nemotron Nano 9B V2' },
+                { id: 'openrouter/free', name: 'OpenRouter Free' },
+                { id: 'openrouter/owl-alpha', name: 'Owl Alpha' }
             ]
         };
 
