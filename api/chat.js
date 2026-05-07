@@ -3,7 +3,8 @@ module.exports = async (req, res) => {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { messages, provider, model, mode, prompt, imageDataUrl, imageMimeType } = req.body;
+    const { messages, provider, model, mode, prompt, imageDataUrl, imageMimeType, internetSearch } = req.body;
+    const isInternetSearch = Boolean(internetSearch);
 
     // Handle image generation mode
     if (mode === 'image') {
@@ -75,7 +76,9 @@ module.exports = async (req, res) => {
                 imageDataUrl,
                 providerUsed: 'gemini',
                 modelUsed: model,
-                mode: 'image'
+                mode: 'image',
+                internetSearchUsed: false,
+                sources: null
             });
         } catch (error) {
             console.error('Image generation error:', error);
@@ -96,6 +99,8 @@ module.exports = async (req, res) => {
     let providerUsed = provider;
     let modelUsed = model;
     let responseText = '';
+    let sources = null;
+    let internetSearchUsed = isInternetSearch;
 
     // Validate image if present
     if (imageDataUrl) {
@@ -144,6 +149,16 @@ module.exports = async (req, res) => {
                     };
                 }
 
+                const openrouterBody = {
+                    model: model,
+                    messages: openrouterMessages
+                };
+
+                // Add web search tool if internet search is enabled
+                if (isInternetSearch) {
+                    openrouterBody.tools = [{ type: "openrouter:web_search" }];
+                }
+
                 const openrouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
                     method: 'POST',
                     headers: {
@@ -152,10 +167,7 @@ module.exports = async (req, res) => {
                         'HTTP-Referer': req.headers.origin || 'http://localhost',
                         'X-Title': 'rene.gpt'
                     },
-                    body: JSON.stringify({
-                        model: model,
-                        messages: openrouterMessages
-                    })
+                    body: JSON.stringify(openrouterBody)
                 });
 
                 if (openrouterResponse.ok) {
@@ -163,6 +175,7 @@ module.exports = async (req, res) => {
                     responseText = data.choices?.[0]?.message?.content || 'Inget svar från OpenRouter.';
                     providerUsed = 'openrouter';
                     modelUsed = model;
+                    internetSearchUsed = isInternetSearch;
                 } else {
                     const status = openrouterResponse.status;
                     let openRouterMessage = '';
@@ -171,6 +184,20 @@ module.exports = async (req, res) => {
                         openRouterMessage = errorData.error?.message || JSON.stringify(errorData);
                     } catch (e) {
                         openRouterMessage = openrouterResponse.statusText;
+                    }
+
+                    // Check if web search failed
+                    if (isInternetSearch) {
+                        const isWebSearchError = openRouterMessage.toLowerCase().includes('web_search') || 
+                                                openRouterMessage.toLowerCase().includes('tool');
+                        if (isWebSearchError) {
+                            return res.status(status).json({ 
+                                error: 'Internet search failed for this OpenRouter request.',
+                                provider, 
+                                model, 
+                                status 
+                            });
+                        }
                     }
 
                     // Statuses eligible for fallback
@@ -221,15 +248,22 @@ module.exports = async (req, res) => {
                 for (const geminiModel of fallbackGeminiModels) {
                     try {
                         const geminiContents = convertMessagesToGemini(messages, imageDataUrl, imageMimeType);
+                        const geminiRequestBody = {
+                            contents: geminiContents
+                        };
+
+                        // Add Google Search grounding if internet search is enabled
+                        if (isInternetSearch) {
+                            geminiRequestBody.tools = [{ googleSearch: {} }];
+                        }
+
                         const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`, {
                             method: 'POST',
                             headers: {
                                 'x-goog-api-key': geminiApiKey,
                                 'Content-Type': 'application/json'
                             },
-                            body: JSON.stringify({
-                                contents: geminiContents
-                            })
+                            body: JSON.stringify(geminiRequestBody)
                         });
 
                         if (geminiResponse.ok) {
@@ -238,6 +272,17 @@ module.exports = async (req, res) => {
                             providerUsed = 'gemini';
                             modelUsed = geminiModel;
                             fallbackUsed = true;
+                            internetSearchUsed = isInternetSearch;
+
+                            // Extract sources from grounding metadata if available
+                            if (isInternetSearch && geminiData.candidates?.[0]?.groundingMetadata?.groundingChunks) {
+                                sources = geminiData.candidates[0].groundingMetadata.groundingChunks
+                                    .filter(chunk => chunk.web)
+                                    .map(chunk => ({ 
+                                        title: chunk.web.title || chunk.web.uri, 
+                                        url: chunk.web.uri 
+                                    }));
+                            }
                             break;
                         } else {
                             const geminiStatus = geminiResponse.status;
@@ -248,6 +293,21 @@ module.exports = async (req, res) => {
                             } catch (e) {
                                 geminiMessage = geminiResponse.statusText;
                             }
+
+                            // Check for Gemini internet search quota/availability errors
+                            if (isInternetSearch) {
+                                const isSearchUnavailable = geminiMessage.toLowerCase().includes('quota') || 
+                                                          geminiMessage.toLowerCase().includes('grounding') ||
+                                                          geminiMessage.toLowerCase().includes('unavailable');
+                                if (isSearchUnavailable) {
+                                    return res.status(geminiStatus).json({ 
+                                        error: 'Gemini internet search is unavailable or quota-limited.',
+                                        originalProviderError,
+                                        geminiError: geminiMessage
+                                    });
+                                }
+                            }
+
                             geminiError = `Gemini model ${geminiModel} failed: Status ${geminiStatus}, Message: ${geminiMessage}`;
                         }
                     } catch (error) {
@@ -271,15 +331,22 @@ module.exports = async (req, res) => {
             }
 
             const geminiContents = convertMessagesToGemini(messages, imageDataUrl, imageMimeType);
+            const geminiRequestBody = {
+                contents: geminiContents
+            };
+
+            // Add Google Search grounding if internet search is enabled
+            if (isInternetSearch) {
+                geminiRequestBody.tools = [{ googleSearch: {} }];
+            }
+
             const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
                 method: 'POST',
                 headers: {
                     'x-goog-api-key': geminiApiKey,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({
-                    contents: geminiContents
-                })
+                body: JSON.stringify(geminiRequestBody)
             });
 
             if (geminiResponse.ok) {
@@ -287,6 +354,17 @@ module.exports = async (req, res) => {
                 responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'Inget svar från Gemini.';
                 providerUsed = 'gemini';
                 modelUsed = model;
+                internetSearchUsed = isInternetSearch;
+
+                // Extract sources from grounding metadata if available
+                if (isInternetSearch && geminiData.candidates?.[0]?.groundingMetadata?.groundingChunks) {
+                    sources = geminiData.candidates[0].groundingMetadata.groundingChunks
+                        .filter(chunk => chunk.web)
+                        .map(chunk => ({ 
+                            title: chunk.web.title || chunk.web.uri, 
+                            url: chunk.web.uri 
+                        }));
+                }
             } else {
                 const status = geminiResponse.status;
                 let geminiMessage = '';
@@ -296,6 +374,22 @@ module.exports = async (req, res) => {
                 } catch (e) {
                     geminiMessage = geminiResponse.statusText;
                 }
+
+                // Check for Gemini internet search quota/availability errors
+                if (isInternetSearch) {
+                    const isSearchUnavailable = geminiMessage.toLowerCase().includes('quota') || 
+                                              geminiMessage.toLowerCase().includes('grounding') ||
+                                              geminiMessage.toLowerCase().includes('unavailable');
+                    if (isSearchUnavailable) {
+                        return res.status(status).json({ 
+                            error: 'Gemini internet search is unavailable or quota-limited.',
+                            provider, 
+                            model, 
+                            status 
+                        });
+                    }
+                }
+
                 return res.status(status).json({ 
                     error: `Gemini error: ${geminiMessage}`, 
                     provider, 
@@ -313,7 +407,9 @@ module.exports = async (req, res) => {
             providerUsed,
             modelUsed,
             fallbackUsed,
-            originalProviderError: originalProviderError || undefined
+            originalProviderError: originalProviderError || undefined,
+            internetSearchUsed,
+            sources: sources || null
         });
 
     } catch (error) {

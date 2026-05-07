@@ -81,6 +81,11 @@
                     🖼️
                 </label>
                 <input type="file" id="imageUploadInput" accept="image/png, image/jpeg, image/webp, image/gif" class="hidden">
+                <!-- Internet search toggle -->
+                <div class="flex items-center mr-2">
+                    <input type="checkbox" id="internetSearchToggle" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-600 rounded bg-gray-700">
+                    <label for="internetSearchToggle" class="ml-2 text-sm text-gray-300">Internet search</label>
+                </div>
                 <button id="sendMessageButton" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition duration-200">Skicka</button>
             </div>
         </div>
@@ -97,6 +102,7 @@
         const imagePreviewThumbnail = document.getElementById('imagePreviewThumbnail');
         const imagePreviewFilename = document.getElementById('imagePreviewFilename');
         const removeImageButton = document.getElementById('removeImageButton');
+        const internetSearchToggle = document.getElementById('internetSearchToggle');
 
         let conversationMessages = [];
         let selectedImageDataUrl = null;
@@ -265,6 +271,7 @@
             const provider = selectedOption.dataset.provider;
             const modelId = selectedOption.value;
             const mode = selectedOption.dataset.mode || 'chat';
+            const internetSearchEnabled = internetSearchToggle.checked;
 
             // Check if image is selected and model supports images (only for chat mode)
             if (selectedImageDataUrl && mode !== 'image') {
@@ -302,7 +309,8 @@
             // Construct request body
             let body = {
                 provider: provider,
-                model: modelId
+                model: modelId,
+                internetSearch: internetSearchEnabled
             };
             if (mode === 'image') {
                 body.mode = 'image';
@@ -376,6 +384,28 @@
                     }
                     statusLine.innerHTML = `<span class="text-xs text-gray-400">${statusText}</span>`;
                     chatMessagesDiv.appendChild(statusLine);
+
+                    // Add internet search used line if applicable
+                    if (responseData.internetSearchUsed) {
+                        const searchLine = document.createElement('div');
+                        searchLine.classList.add('flex', 'justify-start', 'mt-1');
+                        searchLine.innerHTML = `<span class="text-xs text-gray-400">Internet search used</span>`;
+                        chatMessagesDiv.appendChild(searchLine);
+                    }
+
+                    // Add sources if available
+                    if (responseData.sources && Array.isArray(responseData.sources) && responseData.sources.length > 0) {
+                        const sourcesContainer = document.createElement('div');
+                        sourcesContainer.classList.add('flex', 'justify-start', 'mt-1');
+                        let sourcesHTML = '<div class="text-xs text-gray-400">Sources:<ul class="list-disc list-inside ml-2">';
+                        responseData.sources.forEach(source => {
+                            const title = source.title || source.url;
+                            sourcesHTML += `<li><a href="${source.url}" target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:text-indigo-300">${title}</a></li>`;
+                        });
+                        sourcesHTML += '</ul></div>';
+                        sourcesContainer.innerHTML = sourcesHTML;
+                        chatMessagesDiv.appendChild(sourcesContainer);
+                    }
                 }
 
                 chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
