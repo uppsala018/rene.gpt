@@ -47,7 +47,6 @@
                     <option value="reasoning">Resonemang</option>
                     <option value="coding">Kodning</option>
                     <option value="images">Bilder</option>
-                    <option value="video">Video</option>
                     <option value="other">Övrigt</option>
                 </select>
             </div>
@@ -107,9 +106,9 @@
         // --- Model Selection ---
         const models = {
             fast: [
-                { id: 'google-gemini-2-5-flash', name: 'Google Gemini 2.5 Flash' },
-                { id: 'google-gemini-pro', name: 'Google Gemini Pro' },
-                { id: 'openrouter-mistralai/mistral-7b-instruct', name: 'Mistral 7B Instruct (OpenRouter)' }
+                { id: 'google/gemini-2.5-flash', name: 'Google Gemini 2.5 Flash' },
+                { id: 'google/gemini-2.5-pro', name: 'Google Gemini 2.5 Pro' },
+                { id: 'mistralai/mistral-7b-instruct-v0.1', name: 'Mistral 7B Instruct v0.1 (OpenRouter)' }
             ],
             reasoning: [
                 { id: 'liquid/lfm-2.5-1.2b-thinking:free', name: 'Liquid LFM 2.5 1.2B (Thinking)' },
@@ -131,10 +130,6 @@
             images: [
                 { id: 'baidu/qianfan-ocr-fast:free', name: 'Qianfan OCR Fast' },
                 { id: 'nvidia/nemotron-nano-12b-v2-vl:free', name: 'Nemotron Nano 12B V2 VL' }
-            ],
-            video: [
-                { id: 'google/lyria-3-clip-preview', name: 'Lyria 3 Clip Preview' },
-                { id: 'google/lyria-3-pro-preview', name: 'Lyria 3 Pro Preview' }
             ],
             other: [
                 { id: 'liquid/lfm-2.5-1.2b-instruct:free', name: 'Liquid LFM 2.5 1.2B (Instruct)' },
@@ -245,9 +240,39 @@
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                console.error('OpenRouter API Error:', errorData);
-                throw new Error(`OpenRouter API fel: ${errorData.error?.message || response.statusText}`);
+                const status = response.status;
+                let openRouterMessage = '';
+                try {
+                    const errorData = await response.json();
+                    openRouterMessage = errorData.error?.message || JSON.stringify(errorData);
+                    console.error('OpenRouter API Error:', { status, errorData });
+                } catch (e) {
+                    openRouterMessage = response.statusText;
+                    console.error('OpenRouter API Error:', { status, statusText: response.statusText });
+                }
+
+                let errorMsg = '';
+                switch (status) {
+                    case 401:
+                        errorMsg = "API key missing or invalid";
+                        break;
+                    case 402:
+                        errorMsg = "OpenRouter credits/balance problem";
+                        break;
+                    case 404:
+                        errorMsg = "Model ID not found or no endpoint available";
+                        break;
+                    case 429:
+                        errorMsg = "Rate limited by OpenRouter or upstream provider";
+                        break;
+                    case 400:
+                        errorMsg = `OpenRouter message: ${openRouterMessage}`;
+                        break;
+                    default:
+                        errorMsg = `HTTP ${status}: ${openRouterMessage}`;
+                }
+
+                throw new Error(`Model: ${model}, Status: ${status}, Error: ${errorMsg}`);
             }
 
             const data = await response.json();
