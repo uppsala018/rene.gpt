@@ -97,6 +97,9 @@ module.exports = async (req, res) => {
         const selectedProvider = provider || 'openrouter';
         const selectedModel = model || 'tencent/hy3-preview:free';
 
+        // Get user message if provided
+        const userMsg = (messages && messages.length > 0 && messages[0].role === 'user') ? messages[0].content : null;
+
         try {
             // Fetch the webpage with timeout
             const controller = new AbortController();
@@ -130,7 +133,7 @@ module.exports = async (req, res) => {
             const seoData = extractSeoData(html, url);
 
             // Build analysis prompt
-            const promptText = buildAnalysisPrompt(url, analysisType, seoData);
+            const promptText = buildAnalysisPrompt(url, analysisType, seoData, userMsg);
 
             // Prepare messages for AI
             const analysisMessages = [{ role: 'user', content: promptText }];
@@ -724,60 +727,93 @@ function extractSeoData(html, pageUrl) {
 }
 
 // Helper function to build analysis prompt based on type
-function buildAnalysisPrompt(url, analysisType, seoData) {
+function buildAnalysisPrompt(url, analysisType, seoData, userMessage) {
     let prompt = `You are an expert web analyst. Analyze the webpage at URL: ${url} for ${analysisType}.\n\n`;
+    
+    // Language detection instruction
+    prompt += `LANGUAGE INSTRUCTION: `;
+    if (userMessage) {
+        prompt += `The user's message is: "${userMessage}". `;
+    }
+    prompt += `Detect the language of the user's message. If the message is mainly in Swedish, respond in Swedish. If it's mainly in English, respond in English. If there's no user message or it's unclear, default to Swedish.\n\n`;
+    
+    // Style instructions
+    prompt += `OUTPUT STYLE INSTRUCTIONS:\n`;
+    prompt += `- Use Markdown formatting with clear H2/H3 headings\n`;
+    prompt += `- Add spacing between sections\n`;
+    prompt += `- Use bullet lists for lists\n`;
+    prompt += `- Avoid dense wall-of-text; use short paragraphs\n`;
+    prompt += `- Keep tone professional, practical, and direct\n`;
+    prompt += `- Do NOT start with a long disclaimer\n`;
+    prompt += `- If the analysis is based only on parsed HTML (no screenshot), include a brief section called "Begränsning" (Swedish) or "Limitations" (English) with this text: "Analysen bygger på HTML, metadata, rubriker och länkar. Den bedömer inte den visuella layouten via screenshot." (Swedish) or "The analysis is based on HTML, metadata, headings, and links. It does not evaluate the visual layout via screenshot." (English)\n`;
+    prompt += `- Do NOT translate website titles, URLs, brand names, headings, or quoted page text unless necessary\n`;
+    prompt += `- Do NOT use English section titles like "Analysis Disclaimer" when responding in Swedish\n\n`;
+    
     prompt += `Extracted SEO/Page Data:\n${JSON.stringify(seoData, null, 2)}\n\n`;
+    
+    // Structure based on language
+    prompt += `RESPONSE STRUCTURE:\n\n`;
+    
+    prompt += `If responding in Swedish, use this structure:\n\n`;
+    prompt += `## Snabb bedömning\n`;
+    prompt += `[Ge en kort sammanfattning på 3-5 meningar]\n\n`;
+    prompt += `## Det som fungerar bra\n`;
+    prompt += `[Lista 3-5 styrkor]\n\n`;
+    prompt += `## Problem jag ser\n`;
+    prompt += `[Lista huvudproblemen, grupperade efter allvarlighetsgrad]\n\n`;
+    prompt += `## Layout och användarupplevelse\n`;
+    prompt += `[Ge praktisk feedback om layout. Om ingen skärmdump/rendrerad CSS finns tillgänglig, förklara tydligt att layoutfeedbacken härleds från HTML-strukturen.]\n\n`;
+    prompt += `## SEO och struktur\n`;
+    prompt += `[Diskutera title, meta description, H1/H2/H3, interna länkar, bilder, schema, canonical och innehållsstruktur om tillgängligt]\n\n`;
+    prompt += `## Prioriterade förbättringar\n`;
+    prompt += `[Ge 5-8 konkreta förbättringar. Varje rekommendation ska ha: vad som ska ändras, varför det spelar roll, hur man implementerar det kortfattat]\n\n`;
+    prompt += `## Nästa bästa steg\n`;
+    prompt += `[Ge 3 handlingssteg i prioritetsordning]\n\n`;
+    
+    prompt += `If responding in English, use this structure:\n\n`;
+    prompt += `## Quick assessment\n`;
+    prompt += `[Give a short 3-5 sentence summary]\n\n`;
+    prompt += `## What works well\n`;
+    prompt += `[List 3-5 strengths]\n\n`;
+    prompt += `## Problems I see\n`;
+    prompt += `[List the main issues, grouped by severity]\n\n`;
+    prompt += `## Layout and user experience\n`;
+    prompt += `[Give practical layout feedback. If no screenshot/rendered CSS is available, clearly say the layout feedback is inferred from HTML structure.]\n\n`;
+    prompt += `## SEO and structure\n`;
+    prompt += `[Discuss title, meta description, H1/H2/H3, internal links, images, schema, canonical, and content structure if available]\n\n`;
+    prompt += `## Prioritized improvements\n`;
+    prompt += `[Give 5-8 concrete improvements. Each recommendation should have: what to change, why it matters, how to implement it briefly]\n\n`;
+    prompt += `## Next best steps\n`;
+    prompt += `[Give 3 action steps in priority order]\n\n`;
+    
+    // Analysis type specific instructions
     switch (analysisType) {
         case 'SEO':
-            prompt += `Please provide a short structured audit with:
-- Overall score 1-10
-- Biggest SEO problems
-- Title/meta description assessment
-- H1/H2 structure
-- Internal linking
-- Image alt text
-- Schema/structured data
-- Top 5 recommended fixes`;
+            prompt += `ANALYSIS TYPE: SEO\n`;
+            prompt += `Focus more on metadata, headings, internal links, schema, content depth, and search intent.\n`;
             break;
         case 'Layout':
-            prompt += `Explain that this analysis is based on HTML structure only, not a rendered screenshot.
-Assess:
-- page structure
-- visual hierarchy inferred from headings/sections
-- CTA clarity
-- navigation clarity
-- possible mobile/responsive risks
-- top 5 layout improvements`;
+            prompt += `ANALYSIS TYPE: Layout\n`;
+            prompt += `Include a dedicated section "Layoutförbättringar" (Swedish) or "Layout improvements" (English).\n`;
+            prompt += `Always include concrete suggestions for:\n`;
+            prompt += `- hero section\n- visual hierarchy\n- CTA buttons\n- mobile layout\n- spacing/section separation\n- navigation\n`;
+            prompt += `If no screenshot is available, do not claim exact visual facts. Use wording like:\n`;
+            prompt += `"Utifrån HTML-strukturen verkar..." (Swedish) or "Based on the HTML structure, it seems..." (English)\n`;
+            prompt += `"Detta bör kontrolleras visuellt i webbläsaren..." (Swedish) or "This should be verified visually in the browser..." (English)\n`;
             break;
         case 'Copywriting':
-            prompt += `Analyze the copywriting aspects:
-- Headlines effectiveness
-- Message clarity
-- Call-to-action language
-- Tone and voice
-- Persuasion elements
-- Top 5 copywriting improvements`;
+            prompt += `ANALYSIS TYPE: Copywriting\n`;
+            prompt += `Focus more on clarity, tone, CTA, trust, and conversion.\n`;
             break;
         case 'Accessibility':
-            prompt += `Check accessibility issues:
-- missing alt text
-- heading structure
-- link text quality
-- form labels if detectable
-- landmark/semantic HTML if detectable
-- Top 5 accessibility improvements`;
+            prompt += `ANALYSIS TYPE: Accessibility\n`;
+            prompt += `Focus more on heading hierarchy, alt text, link labels, semantic structure, and mobile usability.\n`;
             break;
         case 'Technical':
-            prompt += `Analyze technical aspects:
-- HTML validation issues
-- Meta tags completeness
-- Canonical and robots
-- Page speed factors (from HTML size)
-- Structured data correctness
-- Top 5 technical improvements`;
+            prompt += `ANALYSIS TYPE: Technical\n`;
+            prompt += `Focus on technical aspects like HTML validation, meta tags, page speed factors, etc.\n`;
             break;
-        default:
-            prompt += `Provide a general analysis.`;
     }
+    
     return prompt;
 }
