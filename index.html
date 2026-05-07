@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="sv" class="h-full bg-gray-900">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rene.Gpt</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        /* Custom scrollbar for dark theme */
+        .chat-messages::-webkit-scrollbar {
+            width: 8px;
+        }
+        .chat-messages::-webkit-scrollbar-track {
+            background: #2d3748; /* bg-gray-800 */
+        }
+        .chat-messages::-webkit-scrollbar-thumb {
+            background: #4a5568; /* bg-gray-700 */
+            border-radius: 4px;
+        }
+        .chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #6b7280; /* bg-gray-600 */
+        }
+    </style>
+</head>
+<body class="flex h-full text-gray-100 antialiased">
+    <!-- Sidebar -->
+    <aside class="w-80 bg-gray-800 p-6 flex flex-col shadow-lg overflow-y-auto">
+        <h1 class="text-2xl font-bold mb-6 text-indigo-400">Rene.Gpt</h1>
+
+        <!-- API Key Management -->
+        <div class="mb-8">
+            <h2 class="text-lg font-semibold mb-4 text-gray-200">API-nycklar</h2>
+            <div class="mb-4">
+                <label for="googleApiKey" class="block text-sm font-medium text-gray-300 mb-1">Google AI Studio Nyckel:</label>
+                <input type="password" id="googleApiKey" class="w-full p-2 rounded-md bg-gray-700 border border-gray-600 text-gray-100 focus:ring-indigo-500 focus:border-indigo-500">
+                <button id="saveGoogleKey" class="mt-2 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md transition duration-200">Spara Google Nyckel</button>
+            </div>
+            <div>
+                <label for="openrouterApiKey" class="block text-sm font-medium text-gray-300 mb-1">OpenRouter Nyckel:</label>
+                <input type="password" id="openrouterApiKey" class="w-full p-2 rounded-md bg-gray-700 border border-gray-600 text-gray-100 focus:ring-indigo-500 focus:border-indigo-500">
+                <button id="saveOpenrouterKey" class="mt-2 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md transition duration-200">Spara OpenRouter Nyckel</button>
+            </div>
+        </div>
+
+        <!-- Model Selector -->
+        <div class="mb-8">
+            <h2 class="text-lg font-semibold mb-4 text-gray-200">Modellväljare</h2>
+            <div class="mb-4">
+                <label for="modelCategory" class="block text-sm font-medium text-gray-300 mb-1">Kategori:</label>
+                <select id="modelCategory" class="w-full p-2 rounded-md bg-gray-700 border border-gray-600 text-gray-100 focus:ring-indigo-500 focus:border-indigo-500">
+                    <option value="fast">Snabb</option>
+                    <option value="reasoning">Resonemang</option>
+                    <option value="coding">Kodning</option>
+                    <option value="images">Bilder</option>
+                    <option value="video">Video</option>
+                </select>
+            </div>
+            <div>
+                <label for="selectedModel" class="block text-sm font-medium text-gray-300 mb-1">Modell:</label>
+                <select id="selectedModel" class="w-full p-2 rounded-md bg-gray-700 border border-gray-600 text-gray-100 focus:ring-indigo-500 focus:border-indigo-500">
+                    <!-- Options will be populated by JavaScript -->
+                    <option value="google-gemini-pro">Google Gemini Pro</option>
+                    <option value="openrouter-mistralai/mistral-7b-instruct">Mistral 7B Instruct (OpenRouter)</option>
+                </select>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Chat Window -->
+    <main class="flex-1 flex flex-col bg-gray-900">
+        <header class="bg-gray-800 p-4 shadow-md">
+            <h2 class="text-xl font-semibold text-gray-200">Chatt</h2>
+        </header>
+
+        <div id="chatMessages" class="flex-1 overflow-y-auto p-6 space-y-4 chat-messages">
+            <!-- Chat messages will be appended here -->
+            <div class="flex justify-start">
+                <div class="bg-gray-700 p-3 rounded-lg max-w-xl">
+                    <p class="text-sm">Hej! Hur kan jag hjälpa dig idag?</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-6 bg-gray-800 border-t border-gray-700 flex items-center">
+            <input type="text" id="userMessageInput" placeholder="Skriv ditt meddelande..." class="flex-1 p-3 rounded-lg bg-gray-700 border border-gray-600 text-gray-100 focus:ring-indigo-500 focus:border-indigo-500 mr-4">
+            <button id="sendMessageButton" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition duration-200">Skicka</button>
+        </div>
+    </main>
+
+    <script>
+        const googleApiKeyInput = document.getElementById('googleApiKey');
+        const openrouterApiKeyInput = document.getElementById('openrouterApiKey');
+        const saveGoogleKeyButton = document.getElementById('saveGoogleKey');
+        const saveOpenrouterKeyButton = document.getElementById('saveOpenrouterKey');
+        const modelCategorySelect = document.getElementById('modelCategory');
+        const selectedModelSelect = document.getElementById('selectedModel');
+        const chatMessagesDiv = document.getElementById('chatMessages');
+        const userMessageInput = document.getElementById('userMessageInput');
+        const sendMessageButton = document.getElementById('sendMessageButton');
+
+        let googleApiKey = '';
+        let openrouterApiKey = '';
+
+        // --- API Key Management ---
+        function loadApiKeys() {
+            googleApiKey = localStorage.getItem('googleApiKey') || '';
+            openrouterApiKey = localStorage.getItem('openrouterApiKey') || '';
+            googleApiKeyInput.value = googleApiKey;
+            openrouterApiKeyInput.value = openrouterApiKey;
+        }
+
+        saveGoogleKeyButton.addEventListener('click', () => {
+            googleApiKey = googleApiKeyInput.value;
+            localStorage.setItem('googleApiKey', googleApiKey);
+            alert('Google AI Studio-nyckel sparad!');
+        });
+
+        saveOpenrouterKeyButton.addEventListener('click', () => {
+            openrouterApiKey = openrouterApiKeyInput.value;
+            localStorage.setItem('openrouterApiKey', openrouterApiKey);
+            alert('OpenRouter-nyckel sparad!');
+        });
+
+        // --- Model Selection ---
+        const models = {
+            fast: [
+                { id: 'google-gemini-pro', name: 'Google Gemini Pro' },
+                { id: 'openrouter-mistralai/mistral-7b-instruct', name: 'Mistral 7B Instruct (OpenRouter)' }
+            ],
+            reasoning: [
+                { id: 'openrouter-openai/gpt-4o', name: 'GPT-4o (OpenRouter)' },
+                { id: 'openrouter-anthropic/claude-3-opus', name: 'Claude 3 Opus (OpenRouter)' }
+            ],
+            coding: [
+                { id: 'openrouter-openai/gpt-4o-mini', name: 'GPT-4o Mini (OpenRouter)' },
+                { id: 'openrouter-perplexity/llama-3-8b-instruct', name: 'Llama 3 8B Instruct (OpenRouter)' }
+            ],
+            images: [
+                { id: 'openrouter-stability-ai/stable-diffusion-xl-beta', name: 'Stable Diffusion XL (OpenRouter)' }
+            ],
+            video: [
+                { id: 'openrouter-runwayml/stable-video-diffusion', name: 'Stable Video Diffusion (OpenRouter)' }
+            ]
+        };
+
+        function populateModels() {
+            const category = modelCategorySelect.value;
+            const categoryModels = models[category] || [];
+            selectedModelSelect.innerHTML = ''; // Clear existing options
+
+            categoryModels.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.id;
+                option.textContent = model.name;
+                selectedModelSelect.appendChild(option);
+            });
+        }
+
+        modelCategorySelect.addEventListener('change', populateModels);
+
+        // --- Chat Logic ---
+        function addMessage(sender, message) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('flex', sender === 'user' ? 'justify-end' : 'justify-start');
+            messageElement.innerHTML = `
+                <div class="p-3 rounded-lg max-w-xl ${sender === 'user' ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-100'}">
+                    <p class="text-sm">${message}</p>
+                </div>
+            `;
+            chatMessagesDiv.appendChild(messageElement);
+            chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight; // Auto-scroll to latest message
+        }
+
+        async function sendMessage() {
+            const userMessage = userMessageInput.value.trim();
+            if (!userMessage) return;
+
+            addMessage('user', userMessage);
+            userMessageInput.value = ''; // Clear input
+
+            const selectedModelId = selectedModelSelect.value;
+            let aiResponse = "Jag kunde inte få svar från AI:n. Kontrollera dina API-nycklar eller försök igen senare.";
+
+            // Show a "thinking" message
+            const thinkingMessageElement = document.createElement('div');
+            thinkingMessageElement.classList.add('flex', 'justify-start');
+            thinkingMessageElement.innerHTML = `
+                <div class="bg-gray-700 p-3 rounded-lg max-w-xl text-gray-100">
+                    <p class="text-sm animate-pulse">AI tänker...</p>
+                </div>
+            `;
+            chatMessagesDiv.appendChild(thinkingMessageElement);
+            chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+
+            try {
+                if (selectedModelId.startsWith('google-')) {
+                    if (!googleApiKey) {
+                        aiResponse = "Vänligen ange din Google AI Studio API-nyckel i sidofältet.";
+                    } else {
+                        aiResponse = await sendToGoogleAIStudio(userMessage, googleApiKey);
+                    }
+                } else if (selectedModelId.startsWith('openrouter-')) {
+                    if (!openrouterApiKey) {
+                        aiResponse = "Vänligen ange din OpenRouter API-nyckel i sidofältet.";
+                    } else {
+                        aiResponse = await sendToOpenRouter(userMessage, selectedModelId.replace('openrouter-', ''), openrouterApiKey);
+                    }
+                } else {
+                    aiResponse = "Okänd modell vald.";
+                }
+            } catch (error) {
+                console.error("Fel vid skickande av meddelande till AI:", error);
+                aiResponse = `Ett fel uppstod: ${error.message || error}.`;
+            } finally {
+                // Remove the "thinking" message before adding the actual response
+                chatMessagesDiv.removeChild(thinkingMessageElement);
+                addMessage('ai', aiResponse);
+            }
+        }
+
+        async function sendToGoogleAIStudio(message, apiKey) {
+            // Placeholder for Google AI Studio (Gemini Pro) API call
+            // This is a simplified example. Actual implementation might require Google's client libraries or more complex request/response handling.
+            const modelName = 'gemini-pro'; // Or specific model ID
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [{ text: message }]
+                    }]
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error('Google AI Studio API Error:', errorData);
+                throw new Error(`Google API fel: ${errorData.error.message || response.statusText}`);
+            }
+
+            const data = await response.json();
+            if (data.candidates && data.candidates.length > 0 && data.candidates[0].content && data.candidates[0].content.parts.length > 0) {
+                return data.candidates[0].content.parts[0].text;
+            } else {
+                return "Inget svar från Google AI Studio.";
+            }
+        }
+
+        async function sendToOpenRouter(message, model, apiKey) {
+            const url = 'https://openrouter.ai/api/v1/chat/completions';
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model: model,
+                    messages: [
+                        { role: "user", content: message }
+                    ]
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error('OpenRouter API Error:', errorData);
+                throw new Error(`OpenRouter API fel: ${errorData.message || response.statusText}`);
+            }
+
+            const data = await response.json();
+            if (data.choices && data.choices.length > 0 && data.choices[0].message) {
+                return data.choices[0].message.content;
+            } else {
+                return "Inget svar från OpenRouter.";
+            }
+        }
+
+        sendMessageButton.addEventListener('click', sendMessage);
+        userMessageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Initial setup
+        document.addEventListener('DOMContentLoaded', () => {
+            loadApiKeys();
+            populateModels();
+        });
+    </script>
+</body>
+</html>
