@@ -27,7 +27,7 @@
     <aside class="w-80 bg-gray-800 p-6 flex flex-col shadow-lg overflow-y-auto">
         <h1 class="text-2xl font-bold mb-6 text-indigo-400">Rene.Gpt</h1>
 
-        <!-- Model Selector -->
+<!-- Model Selector -->
         <div class="mt-6 mb-8">
             <h2 class="text-lg font-semibold mb-4 pb-2 border-b border-gray-600 text-gray-200">Modellväljare</h2>
             <div class="mb-4">
@@ -38,6 +38,7 @@
                     <option value="coding">Kodning</option>
                     <option value="images">Bilder</option>
                     <option value="gemini">Gemini</option>
+                    <option value="imagegen">Bildgenerering</option>
                     <option value="other">Övrigt</option>
                 </select>
             </div>
@@ -137,6 +138,11 @@
                 { provider: 'gemini', id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', supportsImages: true },
                 { provider: 'gemini', id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', supportsImages: true }
             ],
+            imagegen: [
+                { provider: 'gemini', id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image', mode: 'image' },
+                { provider: 'gemini', id: 'gemini-3.1-flash-image-preview', name: 'Gemini 3.1 Flash Image Preview', mode: 'image' },
+                { provider: 'gemini', id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image Preview', mode: 'image' }
+            ],
             other: [
                 { provider: 'openrouter', id: 'liquid/lfm-2.5-1.2b-instruct:free', name: 'Liquid LFM 2.5 1.2B (Instruct)' },
                 { provider: 'openrouter', id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B (Instruct)' },
@@ -163,14 +169,30 @@
                 option.value = model.id;
                 option.textContent = model.name;
                 option.dataset.provider = model.provider;
+                if (model.mode) {
+                    option.dataset.mode = model.mode;
+                }
                 if (model.supportsImages) {
                     option.dataset.supportsImages = 'true';
                 }
                 selectedModelSelect.appendChild(option);
             });
+            updatePlaceholder();
+        }
+
+        function updatePlaceholder() {
+            const selectedOption = selectedModelSelect.options[selectedModelSelect.selectedIndex];
+            if (!selectedOption) return;
+            const mode = selectedOption.dataset.mode;
+            if (mode === 'image') {
+                userMessageInput.placeholder = 'Describe the image you want to generate...';
+            } else {
+                userMessageInput.placeholder = 'Skriv ditt meddelande...';
+            }
         }
 
         modelCategorySelect.addEventListener('change', populateModels);
+        selectedModelSelect.addEventListener('change', updatePlaceholder);
 
         // --- Image Upload Handling ---
         imageUploadInput.addEventListener('change', async (e) => {
@@ -238,9 +260,14 @@
             const userMessage = userMessageInput.value.trim();
             if (!userMessage && !selectedImageDataUrl) return;
 
-            // Check if image is selected and model supports images
-            if (selectedImageDataUrl) {
-                const selectedOption = selectedModelSelect.options[selectedModelSelect.selectedIndex];
+            // Get selected model info
+            const selectedOption = selectedModelSelect.options[selectedModelSelect.selectedIndex];
+            const provider = selectedOption.dataset.provider;
+            const modelId = selectedOption.value;
+            const mode = selectedOption.dataset.mode || 'chat';
+
+            // Check if image is selected and model supports images (only for chat mode)
+            if (selectedImageDataUrl && mode !== 'image') {
                 const supportsImages = selectedOption.dataset.supportsImages === 'true';
                 if (!supportsImages) {
                     addMessage('ai', 'Choose a vision-capable model for image input.');
@@ -248,15 +275,18 @@
                 }
             }
 
-            // Add user message to conversation history
-            conversationMessages.push({ role: 'user', content: userMessage || '' });
+            // For image generation mode, we require a text prompt
+            if (mode === 'image' && !userMessage) {
+                addMessage('ai', 'Please describe the image you want to generate.');
+                return;
+            }
+
+            // Add user message to conversation history (only for chat mode)
+            if (mode !== 'image') {
+                conversationMessages.push({ role: 'user', content: userMessage || '' });
+            }
             addMessage('user', userMessage || '[Bild]');
             userMessageInput.value = ''; // Clear input
-
-            // Get selected model and provider
-            const selectedOption = selectedModelSelect.options[selectedModelSelect.selectedIndex];
-            const provider = selectedOption.dataset.provider;
-            const modelId = selectedOption.value;
 
             // Show a "thinking" message
             const thinkingMessageElement = document.createElement('div');
@@ -269,18 +299,29 @@
             chatMessagesDiv.appendChild(thinkingMessageElement);
             chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
 
+            // Construct request body
+            let body = {
+                provider: provider,
+                model: modelId
+            };
+            if (mode === 'image') {
+                body.mode = 'image';
+                body.prompt = userMessage;
+            } else {
+                body.messages = conversationMessages;
+                if (selectedImageDataUrl) {
+                    body.imageDataUrl = selectedImageDataUrl;
+                    body.imageMimeType = selectedImageMimeType;
+                }
+            }
+
             try {
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        messages: conversationMessages,
-                        provider: provider,
-                        model: modelId,
-                        ...(selectedImageDataUrl && { imageDataUrl: selectedImageDataUrl, imageMimeType: selectedImageMimeType })
-                    })
+                    body: JSON.stringify(body)
                 });
 
                 const responseData = await response.json();
@@ -292,36 +333,62 @@
                     return;
                 }
 
-                const aiResponse = responseData.text;
-                // Add AI response to conversation history
-                conversationMessages.push({ role: 'assistant', content: aiResponse });
-
                 // Remove the "thinking" message
                 chatMessagesDiv.removeChild(thinkingMessageElement);
 
-                // Add AI message
-                addMessage('ai', aiResponse);
+                if (mode === 'image') {
+                    // Image generation response
+                    const aiMessageElement = document.createElement('div');
+                    aiMessageElement.classList.add('flex', 'justify-start');
+                    let contentHTML = '<div class="p-3 rounded-lg max-w-xl bg-gray-700 text-gray-100">';
+                    if (responseData.text) {
+                        contentHTML += `<p class="text-sm">${responseData.text}</p>`;
+                    }
+                    if (responseData.imageDataUrl) {
+                        contentHTML += `<img src="${responseData.imageDataUrl}" alt="Generated image" class="mt-2 max-w-xs rounded">`;
+                    }
+                    contentHTML += '</div>';
+                    aiMessageElement.innerHTML = contentHTML;
+                    chatMessagesDiv.appendChild(aiMessageElement);
 
-                // Add provider/model status line
-                const statusLine = document.createElement('div');
-                statusLine.classList.add('flex', 'justify-start', 'mt-1');
-                let statusText = '';
-                if (responseData.fallbackUsed) {
-                    statusText = `Fallback used: ${responseData.providerUsed} · ${responseData.modelUsed}`;
+                    // Status line
+                    const statusLine = document.createElement('div');
+                    statusLine.classList.add('flex', 'justify-start', 'mt-1');
+                    statusLine.innerHTML = `<span class="text-xs text-gray-400">Generated with ${responseData.providerUsed} · ${responseData.modelUsed}</span>`;
+                    chatMessagesDiv.appendChild(statusLine);
                 } else {
-                    statusText = `Used ${responseData.providerUsed} · ${responseData.modelUsed}`;
+                    // Normal chat response
+                    const aiResponse = responseData.text;
+                    // Add AI response to conversation history
+                    conversationMessages.push({ role: 'assistant', content: aiResponse });
+
+                    // Add AI message
+                    addMessage('ai', aiResponse);
+
+                    // Add provider/model status line
+                    const statusLine = document.createElement('div');
+                    statusLine.classList.add('flex', 'justify-start', 'mt-1');
+                    let statusText = '';
+                    if (responseData.fallbackUsed) {
+                        statusText = `Fallback used: ${responseData.providerUsed} · ${responseData.modelUsed}`;
+                    } else {
+                        statusText = `Used ${responseData.providerUsed} · ${responseData.modelUsed}`;
+                    }
+                    statusLine.innerHTML = `<span class="text-xs text-gray-400">${statusText}</span>`;
+                    chatMessagesDiv.appendChild(statusLine);
                 }
-                statusLine.innerHTML = `<span class="text-xs text-gray-400">${statusText}</span>`;
-                chatMessagesDiv.appendChild(statusLine);
+
                 chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
 
-                // Clear image preview after successful send
-                selectedImageDataUrl = null;
-                selectedImageMimeType = null;
-                selectedImageFilename = null;
-                imagePreviewContainer.classList.add('hidden');
-                imagePreviewThumbnail.src = '';
-                imageUploadInput.value = '';
+                // Clear image preview after successful send (for chat mode with image)
+                if (mode !== 'image') {
+                    selectedImageDataUrl = null;
+                    selectedImageMimeType = null;
+                    selectedImageFilename = null;
+                    imagePreviewContainer.classList.add('hidden');
+                    imagePreviewThumbnail.src = '';
+                    imageUploadInput.value = '';
+                }
 
             } catch (error) {
                 console.error("Fel vid skickande av meddelande till API:", error);
@@ -342,6 +409,7 @@
             populateModels();
             // Set default model to tencent/hy3-preview:free
             selectedModelSelect.value = 'tencent/hy3-preview:free';
+            updatePlaceholder();
         });
     </script>
 </body>

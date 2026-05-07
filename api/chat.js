@@ -3,8 +3,70 @@ module.exports = async (req, res) => {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { messages, provider, model, imageDataUrl, imageMimeType } = req.body;
+    const { messages, provider, model, mode, prompt, imageDataUrl, imageMimeType } = req.body;
 
+    // Handle image generation mode
+    if (mode === 'image') {
+        if (provider !== 'gemini') {
+            return res.status(400).json({ error: 'Image generation only supported with Gemini provider' });
+        }
+        if (!prompt) {
+            return res.status(400).json({ error: 'Missing prompt for image generation' });
+        }
+        const geminiApiKey = process.env.GEMINI_API_KEY;
+        if (!geminiApiKey) {
+            return res.status(400).json({ error: 'Missing GEMINI_API_KEY environment variable' });
+        }
+        try {
+            const contents = [{
+                role: 'user',
+                parts: [{ text: prompt }]
+            }];
+            const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+                method: 'POST',
+                headers: {
+                    'x-goog-api-key': geminiApiKey,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ contents })
+            });
+            if (!geminiResponse.ok) {
+                const errorData = await geminiResponse.json().catch(() => ({}));
+                const errorMsg = errorData.error?.message || geminiResponse.statusText;
+                return res.status(geminiResponse.status).json({ error: `Gemini image generation error: ${errorMsg}` });
+            }
+            const geminiData = await geminiResponse.json();
+            let text = '';
+            let imageDataUrl = null;
+            const candidate = geminiData.candidates?.[0];
+            if (candidate && candidate.content && candidate.content.parts) {
+                for (const part of candidate.content.parts) {
+                    if (part.text) {
+                        text += part.text;
+                    }
+                    if (part.inline_data) {
+                        const { mime_type, data } = part.inline_data;
+                        imageDataUrl = `data:${mime_type};base64,${data}`;
+                    }
+                }
+            }
+            if (!text && !imageDataUrl) {
+                text = 'No image generated.';
+            }
+            return res.status(200).json({
+                text: text || null,
+                imageDataUrl,
+                providerUsed: 'gemini',
+                modelUsed: model,
+                mode: 'image'
+            });
+        } catch (error) {
+            console.error('Image generation error:', error);
+            return res.status(500).json({ error: `Image generation failed: ${error.message}` });
+        }
+    }
+
+    // --- Chat mode (existing logic) ---
     if (!messages || !provider || !model) {
         return res.status(400).json({ error: 'Missing required fields: messages, provider, model' });
     }
@@ -186,7 +248,7 @@ module.exports = async (req, res) => {
                 }
             }
         } else if (provider === 'gemini') {
-            // Direct Gemini request
+            // Direct Gemini request (chat)
             if (!geminiApiKey) {
                 return res.status(400).json({ error: 'Missing GEMINI_API_KEY environment variable' });
             }
@@ -228,7 +290,7 @@ module.exports = async (req, res) => {
             return res.status(400).json({ error: `Unknown provider: ${provider}` });
         }
 
-        // Return successful response
+        // Return successful chat response
         return res.status(200).json({
             text: responseText,
             providerUsed,
