@@ -3,7 +3,7 @@ module.exports = async (req, res) => {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { messages, provider, model } = req.body;
+    const { messages, provider, model, imageDataUrl, imageMimeType } = req.body;
 
     if (!messages || !provider || !model) {
         return res.status(400).json({ error: 'Missing required fields: messages, provider, model' });
@@ -18,6 +18,24 @@ module.exports = async (req, res) => {
     let modelUsed = model;
     let responseText = '';
 
+    // Validate image if present
+    if (imageDataUrl) {
+        // Check image data URL format
+        if (!imageDataUrl.startsWith('data:image/')) {
+            return res.status(400).json({ error: 'Invalid image data URL: must start with data:image/' });
+        }
+
+        // Check image size (4MB base64 string limit)
+        if (imageDataUrl.length > 4 * 1024 * 1024) {
+            return res.status(400).json({ error: 'Image is too large. Try a smaller image.' });
+        }
+
+        // Check MIME type
+        if (!imageMimeType || !imageMimeType.startsWith('image/')) {
+            return res.status(400).json({ error: 'Invalid image MIME type' });
+        }
+    }
+
     try {
         if (provider === 'openrouter') {
             // Validate OpenRouter API key
@@ -27,6 +45,26 @@ module.exports = async (req, res) => {
 
             // Attempt OpenRouter request
             try {
+                // Prepare messages for OpenRouter
+                let openrouterMessages = messages.map(msg => ({ ...msg }));
+
+                // If image is present, modify last user message to include image
+                if (imageDataUrl) {
+                    const lastUserMsgIndex = openrouterMessages.slice().reverse().findIndex(msg => msg.role === 'user');
+                    if (lastUserMsgIndex === -1) {
+                        return res.status(400).json({ error: 'No user message found to attach image to' });
+                    }
+                    const actualIndex = openrouterMessages.length - 1 - lastUserMsgIndex;
+                    const userText = openrouterMessages[actualIndex].content || '';
+                    openrouterMessages[actualIndex] = {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: userText },
+                            { type: 'image_url', image_url: { url: imageDataUrl } }
+                        ]
+                    };
+                }
+
                 const openrouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
                     method: 'POST',
                     headers: {
@@ -37,7 +75,7 @@ module.exports = async (req, res) => {
                     },
                     body: JSON.stringify({
                         model: model,
-                        messages: messages
+                        messages: openrouterMessages
                     })
                 });
 
@@ -97,13 +135,13 @@ module.exports = async (req, res) => {
                     });
                 }
 
-                // Fallback Gemini models in order: gemini-2.5-flash-lite, then gemini-2.5-flash
+                // Fallback Gemini models (vision-capable, as per requirements)
                 const fallbackGeminiModels = ['gemini-2.5-flash-lite', 'gemini-2.5-flash'];
                 let geminiError = null;
 
                 for (const geminiModel of fallbackGeminiModels) {
                     try {
-                        const geminiContents = convertMessagesToGemini(messages);
+                        const geminiContents = convertMessagesToGemini(messages, imageDataUrl, imageMimeType);
                         const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`, {
                             method: 'POST',
                             headers: {
@@ -153,7 +191,7 @@ module.exports = async (req, res) => {
                 return res.status(400).json({ error: 'Missing GEMINI_API_KEY environment variable' });
             }
 
-            const geminiContents = convertMessagesToGemini(messages);
+            const geminiContents = convertMessagesToGemini(messages, imageDataUrl, imageMimeType);
             const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
                 method: 'POST',
                 headers: {
@@ -206,7 +244,7 @@ module.exports = async (req, res) => {
 };
 
 // Helper function to convert OpenAI-style messages to Gemini format
-function convertMessagesToGemini(messages) {
+function convertMessagesToGemini(messages, imageDataUrl = null, imageMimeType = null) {
     const contents = [];
     let systemInstruction = '';
 
@@ -218,16 +256,34 @@ function convertMessagesToGemini(messages) {
 
     // Process non-system messages
     const nonSystemMessages = messages.filter(msg => msg.role !== 'system');
-    for (const msg of nonSystemMessages) {
+    for (let i = 0; i < nonSystemMessages.length; i++) {
+        const msg = nonSystemMessages[i];
         if (msg.role === 'user') {
-            let text = msg.content;
+            let text = msg.content || '';
             // Prepend system instruction to first user message if exists
             if (contents.length === 0 && systemInstruction) {
                 text = `${systemInstruction}\n\n${text}`;
             }
+            const parts = [{ text: text }];
+
+            // Add image to the last user message if imageDataUrl exists
+            if (imageDataUrl && i === nonSystemMessages.length - 1) {
+                // Strip data URL prefix (e.g., data:image/png;base64,)
+                const base64Data = imageDataUrl.split(',')[1];
+                if (!base64Data) {
+                    throw new Error('Invalid image data URL: no base64 data found');
+                }
+                parts.push({
+                    inline_data: {
+                        mime_type: imageMimeType,
+                        data: base64Data
+                    }
+                });
+            }
+
             contents.push({
                 role: 'user',
-                parts: [{ text: text }]
+                parts: parts
             });
         } else if (msg.role === 'assistant') {
             contents.push({

@@ -65,9 +65,23 @@
             </div>
         </div>
 
-        <div class="p-6 bg-gray-800 border-t border-gray-700 flex items-center">
-            <input type="text" id="userMessageInput" placeholder="Skriv ditt meddelande..." class="flex-1 p-3 rounded-lg bg-gray-700 border border-gray-600 text-gray-100 focus:ring-indigo-500 focus:border-indigo-500 mr-4">
-            <button id="sendMessageButton" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition duration-200">Skicka</button>
+        <div class="p-6 bg-gray-800 border-t border-gray-700 flex flex-col gap-2">
+            <!-- Image preview container -->
+            <div id="imagePreviewContainer" class="hidden w-full flex items-center gap-2 p-2 bg-gray-700 rounded-lg">
+                <img id="imagePreviewThumbnail" class="h-10 w-10 object-cover rounded" alt="Bildförhandsvisning">
+                <span id="imagePreviewFilename" class="text-sm text-gray-200 flex-1 truncate"></span>
+                <button id="removeImageButton" class="text-red-400 hover:text-red-300 text-lg leading-none ml-2">✕</button>
+            </div>
+            <!-- Input row -->
+            <div class="flex items-center w-full">
+                <input type="text" id="userMessageInput" placeholder="Skriv ditt meddelande..." class="flex-1 p-3 rounded-lg bg-gray-700 border border-gray-600 text-gray-100 focus:ring-indigo-500 focus:border-indigo-500 mr-4">
+                <!-- Image upload button -->
+                <label for="imageUploadInput" class="cursor-pointer p-3 rounded-lg bg-gray-700 border border-gray-600 hover:bg-gray-600 mr-2 flex items-center justify-center" title="Ladda upp bild">
+                    🖼️
+                </label>
+                <input type="file" id="imageUploadInput" accept="image/png, image/jpeg, image/webp, image/gif" class="hidden">
+                <button id="sendMessageButton" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition duration-200">Skicka</button>
+            </div>
         </div>
     </main>
 
@@ -77,8 +91,16 @@
         const chatMessagesDiv = document.getElementById('chatMessages');
         const userMessageInput = document.getElementById('userMessageInput');
         const sendMessageButton = document.getElementById('sendMessageButton');
+        const imageUploadInput = document.getElementById('imageUploadInput');
+        const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+        const imagePreviewThumbnail = document.getElementById('imagePreviewThumbnail');
+        const imagePreviewFilename = document.getElementById('imagePreviewFilename');
+        const removeImageButton = document.getElementById('removeImageButton');
 
         let conversationMessages = [];
+        let selectedImageDataUrl = null;
+        let selectedImageMimeType = null;
+        let selectedImageFilename = null;
 
         // --- Model Selection ---
         const models = {
@@ -105,15 +127,15 @@
                 { provider: 'openrouter', id: 'poolside/laguna-xs.2:free', name: 'Laguna XS.2' }
             ],
             images: [
-                { provider: 'openrouter', id: 'baidu/qianfan-ocr-fast:free', name: 'Qianfan OCR Fast' },
-                { provider: 'openrouter', id: 'nvidia/nemotron-nano-12b-v2-vl:free', name: 'Nemotron Nano 12B V2 VL' }
+                { provider: 'openrouter', id: 'baidu/qianfan-ocr-fast:free', name: 'Qianfan OCR Fast', supportsImages: true },
+                { provider: 'openrouter', id: 'nvidia/nemotron-nano-12b-v2-vl:free', name: 'Nemotron Nano 12B V2 VL', supportsImages: true }
             ],
             gemini: [
-                { provider: 'gemini', id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview' },
-                { provider: 'gemini', id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash-Lite Preview' },
-                { provider: 'gemini', id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
-                { provider: 'gemini', id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite' },
-                { provider: 'gemini', id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' }
+                { provider: 'gemini', id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', supportsImages: true },
+                { provider: 'gemini', id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash-Lite Preview', supportsImages: true },
+                { provider: 'gemini', id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', supportsImages: true },
+                { provider: 'gemini', id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', supportsImages: true },
+                { provider: 'gemini', id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', supportsImages: true }
             ],
             other: [
                 { provider: 'openrouter', id: 'liquid/lfm-2.5-1.2b-instruct:free', name: 'Liquid LFM 2.5 1.2B (Instruct)' },
@@ -141,11 +163,63 @@
                 option.value = model.id;
                 option.textContent = model.name;
                 option.dataset.provider = model.provider;
+                if (model.supportsImages) {
+                    option.dataset.supportsImages = 'true';
+                }
                 selectedModelSelect.appendChild(option);
             });
         }
 
         modelCategorySelect.addEventListener('change', populateModels);
+
+        // --- Image Upload Handling ---
+        imageUploadInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Check file type
+            const acceptedTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+            if (!acceptedTypes.includes(file.type)) {
+                addMessage('ai', 'Endast bildfiler (PNG, JPEG, WebP, GIF) stöds.');
+                imageUploadInput.value = '';
+                return;
+            }
+
+            // Check file size (3MB binary to avoid 4MB base64 limit)
+            const maxFileSize = 3 * 1024 * 1024; // 3MB
+            if (file.size > maxFileSize) {
+                addMessage('ai', 'Image is too large. Try a smaller image.');
+                imageUploadInput.value = '';
+                return;
+            }
+
+            // Read file as base64 data URL
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                selectedImageDataUrl = event.target.result;
+                selectedImageMimeType = file.type;
+                selectedImageFilename = file.name;
+
+                // Show preview
+                imagePreviewThumbnail.src = selectedImageDataUrl;
+                imagePreviewFilename.textContent = file.name;
+                imagePreviewContainer.classList.remove('hidden');
+            };
+            reader.onerror = () => {
+                addMessage('ai', 'Kunde inte läsa bildfilen.');
+                imageUploadInput.value = '';
+            };
+            reader.readAsDataURL(file);
+        });
+
+        removeImageButton.addEventListener('click', () => {
+            selectedImageDataUrl = null;
+            selectedImageMimeType = null;
+            selectedImageFilename = null;
+            imagePreviewContainer.classList.add('hidden');
+            imagePreviewThumbnail.src = '';
+            imageUploadInput.value = '';
+        });
 
         // --- Chat Logic ---
         function addMessage(sender, message) {
@@ -162,11 +236,21 @@
 
         async function sendMessage() {
             const userMessage = userMessageInput.value.trim();
-            if (!userMessage) return;
+            if (!userMessage && !selectedImageDataUrl) return;
+
+            // Check if image is selected and model supports images
+            if (selectedImageDataUrl) {
+                const selectedOption = selectedModelSelect.options[selectedModelSelect.selectedIndex];
+                const supportsImages = selectedOption.dataset.supportsImages === 'true';
+                if (!supportsImages) {
+                    addMessage('ai', 'Choose a vision-capable model for image input.');
+                    return;
+                }
+            }
 
             // Add user message to conversation history
-            conversationMessages.push({ role: 'user', content: userMessage });
-            addMessage('user', userMessage);
+            conversationMessages.push({ role: 'user', content: userMessage || '' });
+            addMessage('user', userMessage || '[Bild]');
             userMessageInput.value = ''; // Clear input
 
             // Get selected model and provider
@@ -194,7 +278,8 @@
                     body: JSON.stringify({
                         messages: conversationMessages,
                         provider: provider,
-                        model: modelId
+                        model: modelId,
+                        ...(selectedImageDataUrl && { imageDataUrl: selectedImageDataUrl, imageMimeType: selectedImageMimeType })
                     })
                 });
 
@@ -229,6 +314,14 @@
                 statusLine.innerHTML = `<span class="text-xs text-gray-400">${statusText}</span>`;
                 chatMessagesDiv.appendChild(statusLine);
                 chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+
+                // Clear image preview after successful send
+                selectedImageDataUrl = null;
+                selectedImageMimeType = null;
+                selectedImageFilename = null;
+                imagePreviewContainer.classList.add('hidden');
+                imagePreviewThumbnail.src = '';
+                imageUploadInput.value = '';
 
             } catch (error) {
                 console.error("Fel vid skickande av meddelande till API:", error);
