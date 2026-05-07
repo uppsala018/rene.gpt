@@ -43,8 +43,8 @@
         </div>
 
         <!-- Model Selector -->
-        <div class="mb-8">
-            <h2 class="text-lg font-semibold mb-4 text-gray-200">Modellväljare</h2>
+        <div class="mt-6 mb-8">
+            <h2 class="text-lg font-semibold mb-4 pb-2 border-b border-gray-600 text-gray-200">Modellväljare</h2>
             <div class="mb-4">
                 <label for="modelCategory" class="block text-sm font-medium text-gray-300 mb-1">Kategori:</label>
                 <select id="modelCategory" class="w-full p-2 rounded-md bg-gray-700 border border-gray-600 text-gray-100 focus:ring-indigo-500 focus:border-indigo-500">
@@ -59,8 +59,6 @@
                 <label for="selectedModel" class="block text-sm font-medium text-gray-300 mb-1">Modell:</label>
                 <select id="selectedModel" class="w-full p-2 rounded-md bg-gray-700 border border-gray-600 text-gray-100 focus:ring-indigo-500 focus:border-indigo-500">
                     <!-- Options will be populated by JavaScript -->
-                    <option value="google-gemini-pro">Google Gemini Pro</option>
-                    <option value="openrouter-mistralai/mistral-7b-instruct">Mistral 7B Instruct (OpenRouter)</option>
                 </select>
             </div>
         </div>
@@ -124,6 +122,7 @@
         // --- Model Selection ---
         const models = {
             fast: [
+                { id: 'google-gemini-2-5-flash', name: 'Google Gemini 2.5 Flash' },
                 { id: 'google-gemini-pro', name: 'Google Gemini Pro' },
                 { id: 'openrouter-mistralai/mistral-7b-instruct', name: 'Mistral 7B Instruct (OpenRouter)' }
             ],
